@@ -11,7 +11,7 @@ namespace ExcelMerge
     {
         private static Regex _annuledRegex;
         private static Regex _validRegex;
-        private static readonly List<CarInfo> Cars = new List<CarInfo>();
+        private static readonly Dictionary<string, CarInfo> Cars = new Dictionary<string, CarInfo>();
         private static readonly Dictionary<string, string> ModelsForReplace = new Dictionary<string, string>();
         private static readonly Dictionary<string, string> BrandsForReplace = new Dictionary<string, string>();
         private static readonly KeyValuePair<string, string> CharReplace = new KeyValuePair<string, string>
@@ -67,7 +67,7 @@ namespace ExcelMerge
             }
 
             var year = ReadInput<int>("Начиная с какого года (включая) делать выборку?");
-            var cars = Cars.Where(t => t.Year >= year).ToList();
+            var cars = Cars.Where(t => t.Value.Year >= year && t.Value.Status == CarStatus.Valid).ToList();
 
             using (var excel = new ExcelPackage(fileName))
             {
@@ -91,12 +91,12 @@ namespace ExcelMerge
                 for (var i = 0; i < cars.Count; i++)
                 {
                     var row = i + 2;
-                    var car = cars[i];
+                    var car = cars[i].Value;
                     ws.Cells[row, 1].Value = car.Region;
                     ws.Cells[row, 2].Value = car.Licence;
                     ws.Cells[row, 3].Value = car.RegNumber;
                     ws.Cells[row, 4].Value = car.Year;
-                    ws.Cells[row, 5].Value = car.Status;
+                    ws.Cells[row, 5].Value = MapStatus(car.Status);
                     ws.Cells[row, 6].Value = car.Brend;
                     ws.Cells[row, 7].Value = car.Model;
                 }
@@ -114,26 +114,47 @@ namespace ExcelMerge
             {
                 foreach (var worksheet in excel.Workbook.Worksheets)
                 {
-                    var proceed = ReadInput<string>($"Делать обработку для вкладки с название {worksheet.Name}? (да/нет)");
+                    Console.WriteLine($"Делать обработку для вкладки с название {worksheet.Name}? (да1/да2/нет)");
+                    Console.WriteLine("Если да1 - нужно будет указать регион и столбцы для реестра и бланка");
+                    Console.WriteLine("Если да2 - нужно будет указать столбец с уже готовым номером лицензии");
+                    var proceed = ReadInput<string>();
 
-                    if(string.IsNullOrEmpty(proceed) || proceed.ToUpper() != "ДА")
+                    if(string.IsNullOrEmpty(proceed) || (proceed.ToUpper() != "ДА1" && proceed.ToUpper() != "ДА2"))
                         continue;
 
-                    var cars = new List<CarInfo>();
+                    var cars = new Dictionary<string, CarInfo>();
+
+                    var licenceMerged = false;
+
+                    var region = "";
+                    var licenceNumberCol = 0;
+                    var blankNumberCol = 0;
+                    var licenceMergedCol = 0;
+
                     Console.WriteLine();
-                    Console.WriteLine(@"Укажите название региона для этой вкладки (например МО, МСК)");
-                    Console.WriteLine(@"Оно так же будет использованно для соединения номера реестра ");
-                    Console.WriteLine(@"и номера бланка для получения номера лицензии");
-                    Console.WriteLine();
-                    var region = ReadInput<string>("Название региона:");
-                    Console.WriteLine();
-                    Console.WriteLine(@"Так же нужно указать в каких столбцах находятся необходимые данные");
-                    Console.WriteLine();
-                    Console.WriteLine(@"из этого столбца будут взяты только цифры");
-                    var licenceNumberCol = ReadInput<int>("номер реестра:");
-                    Console.WriteLine();
-                    Console.WriteLine(@"из этого столбца будут взяты только цифры");
-                    var blankNumberCol = ReadInput<int>("номер бланка:");
+                    if (proceed.ToUpper() == "ДА1")
+                    {
+                        Console.WriteLine(@"Укажите название региона для этой вкладки (например МО, МСК)");
+                        Console.WriteLine(@"Оно так же будет использованно для соединения номера реестра ");
+                        Console.WriteLine(@"и номера бланка для получения номера лицензии");
+                        Console.WriteLine();
+                        region = ReadInput<string>("Название региона:");
+                        Console.WriteLine();
+                        Console.WriteLine(@"Так же нужно указать в каких столбцах находятся необходимые данные");
+                        Console.WriteLine();
+                        Console.WriteLine(@"из этого столбца будут взяты только цифры");
+                        licenceNumberCol = ReadInput<int>("номер реестра:");
+                        Console.WriteLine();
+                        Console.WriteLine(@"из этого столбца будут взяты только цифры");
+                        blankNumberCol = ReadInput<int>("номер бланка:");
+                    }
+                    else
+                    {
+                        licenceMerged = true;
+                        Console.WriteLine(@"из этого столбца будут взяты только цифры и буквы и он будет переведен в верхний регистр");
+                        licenceMergedCol = ReadInput<int>("номер лицензии:");
+                    }
+                    
                     Console.WriteLine();
                     Console.WriteLine(@"из этого столбца будут взяты только цифры и буквы и он будет переведен в верхний регистр");
                     var regNumberCol = ReadInput<int>("гос номер: ");
@@ -162,22 +183,31 @@ namespace ExcelMerge
                     {
                         for (var i = 1; i <= rows; i++)
                         {
-                            var part1 = OnlyNumbers(worksheet.Cells[i, licenceNumberCol].Text);
+                            string licence;
 
-                            if (string.IsNullOrWhiteSpace(part1))
-                                continue;
+                            if (licenceMerged)
+                            {
+                                licence = OnlyNumbersAndLetters(worksheet.Cells[i, licenceMergedCol].Text).ToUpper();
+                            }
+                            else
+                            {
+                                var part1 = OnlyNumbers(worksheet.Cells[i, licenceNumberCol].Text);
 
-                            var part2 = OnlyNumbers(worksheet.Cells[i, blankNumberCol].Text);
-                            var licence = $"{part1}{region}{part2}";
+                                if (string.IsNullOrWhiteSpace(part1))
+                                    continue;
 
+                                var part2 = OnlyNumbers(worksheet.Cells[i, blankNumberCol].Text);
+                                licence = $"{part1}{region}{part2}";
+                            }
+                            
                             var regNumber = EngCharReplaceOnRus(OnlyNumbersAndLetters(worksheet.Cells[i, regNumberCol].Text)).ToUpper();
                             var yearStr = OnlyNumbers(worksheet.Cells[i, yearCol].Text);
                             var year = string.IsNullOrWhiteSpace(yearStr) ? 0 : int.Parse(yearStr);
-                            var status = ReplaceStatus(worksheet.Cells[i, statusCol].Text);
+                            var status = licenceMerged ? CarStatus.Valid : ReplaceStatus(worksheet.Cells[i, statusCol].Text);
                             var brend = ReplaceIfFound(BrandsForReplace, worksheet.Cells[i, brendCol].Text);
                             var model = ReplaceIfFound(ModelsForReplace, worksheet.Cells[i, modelCol].Text);
 
-                            cars.Add(new CarInfo
+                            var car = new CarInfo
                             {
                                 Region = region,
                                 Licence = licence,
@@ -186,10 +216,27 @@ namespace ExcelMerge
                                 Status = status,
                                 Brend = brend,
                                 Model = model
-                            });
+                            };
+
+                            if (cars.ContainsKey(licence))
+                            {
+                                Console.WriteLine($"Машина с лицензией {licence} уже была добавлена.");
+                                continue;
+                            }
+
+                            cars.Add(licence, car);
                         }
 
-                        Cars.AddRange(cars);
+                        foreach (var car in cars)
+                        {
+                            if (Cars.ContainsKey(car.Key))
+                            {
+                                Console.WriteLine($"Машина с лицензией {car.Key} уже была добавлена.");
+                                continue;
+                            }
+
+                            Cars.Add(car.Key, car.Value);
+                        }
                     }
                     catch (Exception e)
                     {
@@ -206,11 +253,11 @@ namespace ExcelMerge
             }
         }
 
-        private static T ReadInput<T>(string prompt)
+        private static T ReadInput<T>(string prompt = null)
         {
             var validInput = false;
             var result = default(T);
-            Console.WriteLine(prompt);
+            if(!string.IsNullOrWhiteSpace(prompt)) Console.WriteLine(prompt);
             while (!validInput)
             {
                 try
@@ -242,20 +289,20 @@ namespace ExcelMerge
             return dic.ContainsKey(key.ToUpper()) ? dic[key.ToUpper()] : key;
         }
 
-        private static string ReplaceStatus(string value)
+        private static CarStatus ReplaceStatus(string value)
         {
             if (string.IsNullOrWhiteSpace(value))
-                return "ДЕЙСТВУЮЩЕЕ";
+                return CarStatus.Valid;
 
             if (_annuledRegex.IsMatch(value))
-                return "АННУЛИРОВАНО";
+                return CarStatus.Annuled;
 
             if (_validRegex.IsMatch(value))
-                return "ДЕЙСТВУЮЩЕЕ";
+                return CarStatus.Valid;
 
-            Console.WriteLine($"Значение статуса {value} не подходит под правила регулярного выражения. Будет оставлено как есть");
+            Console.WriteLine($"Значение статуса {value} не подходит под правила регулярного выражения.");
 
-            return value;
+            return CarStatus.Undefined;
         }
 
         private static string EngCharReplaceOnRus(string value)
@@ -294,6 +341,16 @@ namespace ExcelMerge
         {
             return new Regex(File.ReadAllText(fileName), RegexOptions.IgnoreCase);
         }
+
+        private static string MapStatus(CarStatus status)
+        {
+            switch (status)
+            {
+                case CarStatus.Annuled:return "АННУЛИРОВАНО";
+                case CarStatus.Valid: return "ДЕЙСТВУЮЩЕЕ";
+                default: return "";
+            }
+        }
     }
 
     public class CarInfo
@@ -302,8 +359,15 @@ namespace ExcelMerge
         public string Licence { get; set; }
         public string RegNumber { get; set; }
         public int Year { get; set; }
-        public string Status { get; set; }
+        public CarStatus Status { get; set; }
         public string Brend { get; set; }
         public string Model { get; set; }
+    }
+
+    public enum CarStatus
+    {
+        Undefined,
+        Annuled,
+        Valid
     }
 }
