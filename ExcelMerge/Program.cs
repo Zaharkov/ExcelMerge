@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -27,21 +28,22 @@ namespace ExcelMerge
 
         public static void Main(string[] args)
         {
-            LoadReplaceData(BrandsForReplace, "BrandReplace.txt");
-            LoadReplaceData(ModelsForReplace, "ModelReplace.txt");
-            LoadCommands("Commands.txt");
-            _annuledRegex = LoadRegexData("AnnulledRegex.txt");
-            _validRegex = LoadRegexData("ValidRegex.txt");
-            _licenceRegex = LoadRegexData("LicenceRegex.txt");
+            File.Delete("log.txt");
+            LoadReplaceData(BrandsForReplace, "Static/BrandReplace.txt");
+            LoadReplaceData(ModelsForReplace, "Static/ModelReplace.txt");
+            LoadCommands("Static/Commands.txt");
+            _annuledRegex = new Regex(ConfigurationManager.AppSettings["AnnulledRegex"], RegexOptions.IgnoreCase);
+            _validRegex = new Regex(ConfigurationManager.AppSettings["ValidRegex"], RegexOptions.IgnoreCase);
+            _licenceRegex = new Regex(ConfigurationManager.AppSettings["LicenceRegex"], RegexOptions.IgnoreCase);
 
             while (true)
             {
-                Console.WriteLine("Загрузка данных");
+                Log("Загрузка данных");
                 var directoryPath = ReadInput<string>("Укажите путь к папке с файлами, которые нужно смерджить");
 
                 if (!Directory.Exists(directoryPath))
                 {
-                    Console.WriteLine($"Папки {directoryPath} не существует");
+                    Log($"Папки {directoryPath} не существует");
                     continue;
                 }
 
@@ -51,15 +53,15 @@ namespace ExcelMerge
                 {
                     ProceedFile(file);
 
-                    Console.WriteLine();
-                    Console.WriteLine($"Загрузка файла {file.Name} успешно завершена");
-                    Console.WriteLine();
+                    Log();
+                    Log($"Загрузка файла {file.Name} успешно завершена");
+                    Log();
                 }
 
                 break;
             }
 
-            Console.WriteLine("Создаем таблицу на основен данных");
+            Log("Создаем таблицу на основен данных");
 
             FileInfo fileName;
             while (true)
@@ -68,7 +70,7 @@ namespace ExcelMerge
                 fileName = new FileInfo($"{name}.xlsx");
                 if (fileName.Exists)
                 {
-                    Console.WriteLine($"Файл {fileName.DirectoryName}/{fileName.Name} уже существует, введите другое имя");
+                    Log($"Файл {fileName.DirectoryName}/{fileName.Name} уже существует, введите другое имя");
                     continue;
                 }
 
@@ -76,7 +78,7 @@ namespace ExcelMerge
             }
 
             var year = ReadInput<int>("Начиная с какого года (включая) делать выборку?");
-            var cars = Cars.Where(t => t.Value.Year >= year && t.Value.Status == CarStatus.Valid).ToList();
+            var cars = Cars.Where(t => t.Value.Year >= year && t.Value.Status == CarStatus.Valid || t.Value.IsException).ToList();
 
             using (var excel = new ExcelPackage(fileName))
             {
@@ -107,13 +109,13 @@ namespace ExcelMerge
                 excel.Save();
             }
 
-            Console.WriteLine("Готово!");
+            Log("Готово!");
             Console.ReadLine();
         }
 
         private static void ProceedFile(FileInfo file)
         {
-            Console.WriteLine($"Обработка файла {file.Name}");
+            Log($"Обработка файла {file.Name}");
             using (var excel = new ExcelPackage(file))
             {
                 foreach (var worksheet in excel.Workbook.Worksheets)
@@ -121,7 +123,7 @@ namespace ExcelMerge
                     string proceed;
                     if (_autoCommand)
                     {
-                        Console.WriteLine($"Какой набор комманд использовать для вкладки {worksheet.Name}? (1,2,3..) или нет для пропуска");
+                        Log($"Какой набор комманд использовать для вкладки {worksheet.Name}? (1,2,3..) или нет для пропуска");
 
                         int commands;
                         while (true)
@@ -133,13 +135,13 @@ namespace ExcelMerge
 
                             if(commands <= 0)
                             {
-                                Console.WriteLine($"Число должно быть положительным, но введено {commands}");
+                                Log($"Число должно быть положительным, но введено {commands}");
                                 continue;
                             }
 
                             if (commands > Commands.Count)
                             {
-                                Console.WriteLine($"Число не может быть больше чем {Commands.Count}");
+                                Log($"Число не может быть больше чем {Commands.Count}");
                                 continue;
                             }
 
@@ -154,9 +156,9 @@ namespace ExcelMerge
                     }
                     else
                     {
-                        Console.WriteLine($"Делать обработку для вкладки с название {worksheet.Name}? (да1/да2/нет)");
-                        Console.WriteLine("Если да1 - нужно будет указать регион и столбцы для реестра и бланка");
-                        Console.WriteLine("Если да2 - нужно будет указать столбец с уже готовым номером лицензии");
+                        Log($"Делать обработку для вкладки с название {worksheet.Name}? (да1/да2/нет)");
+                        Log("Если да1 - нужно будет указать регион и столбцы для реестра и бланка");
+                        Log("Если да2 - нужно будет указать столбец с уже готовым номером лицензии");
                         proceed = ReadInput<string>();
 
                         if (string.IsNullOrEmpty(proceed) || (proceed.ToUpper() != "ДА1" && proceed.ToUpper() != "ДА2"))
@@ -173,55 +175,63 @@ namespace ExcelMerge
                     var blankNumberCol = 0;
                     var licenceMergedCol = 0;
 
-                    Console.WriteLine();
+                    Log();
                     if (proceed.ToUpper() == "ДА1")
                     {
-                        Console.WriteLine(@"Укажите название региона для этой вкладки (например МО, МСК)");
-                        Console.WriteLine(@"Оно так же будет использованно для соединения номера реестра ");
-                        Console.WriteLine(@"и номера бланка для получения номера лицензии");
-                        Console.WriteLine();
+                        Log(@"Укажите название региона для этой вкладки (например МО, МСК)");
+                        Log(@"Оно так же будет использованно для соединения номера реестра ");
+                        Log(@"и номера бланка для получения номера лицензии");
+                        Log();
                         region = ReadInput<string>("Название региона:", _autoCommand);
-                        Console.WriteLine();
-                        Console.WriteLine(@"Так же нужно указать в каких столбцах находятся необходимые данные");
-                        Console.WriteLine();
-                        Console.WriteLine(@"из этого столбца будут взяты только цифры");
+                        Log();
+                        Log(@"Так же нужно указать в каких столбцах находятся необходимые данные");
+                        Log();
+                        Log(@"из этого столбца будут взяты только цифры");
                         licenceNumberCol = ReadInput<int>("номер реестра:", _autoCommand);
-                        Console.WriteLine();
-                        Console.WriteLine(@"из этого столбца будут взяты только цифры");
+                        Log();
+                        Log(@"из этого столбца будут взяты только цифры");
                         blankNumberCol = ReadInput<int>("номер бланка:", _autoCommand);
                     }
                     else
                     {
                         licenceMerged = true;
-                        Console.WriteLine(@"из этого столбца будут взяты только цифры и буквы и он будет переведен в верхний регистр");
+                        Log(@"из этого столбца будут взяты только цифры и буквы и он будет переведен в верхний регистр");
                         licenceMergedCol = ReadInput<int>("номер лицензии:", _autoCommand);
                     }
                     
-                    Console.WriteLine();
-                    Console.WriteLine(@"из этого столбца будут взяты только цифры и буквы и он будет переведен в верхний регистр");
+                    Log();
+                    Log(@"из этого столбца будут взяты только цифры и буквы и он будет переведен в верхний регистр");
                     var regNumberCol = ReadInput<int>("гос номер: ", _autoCommand);
-                    Console.WriteLine();
-                    Console.WriteLine("из этого столбца будут взяты только цифры, если пусто, тогда 0");
+                    Log();
+                    Log("из этого столбца будут взяты только цифры, если пусто, тогда 0");
                     var yearCol = ReadInput<int>("год выпуска:", _autoCommand);
-                    Console.WriteLine();
+                    Log();
                     var statusCol = 0;
                     if (!licenceMerged)
                     {
-                        Console.WriteLine("данные из этого столбца будут преобразованы в ДЕЙСТВУЮЩЕЕ или АННУЛИРОВАНО");
-                        Console.WriteLine("в соответствии с регулярными выражениями заданными в AnnulledRegex.txt и ValidRegex.txt (регистр игнориуется)");
-                        Console.WriteLine("если значение будет пустым тогда по умолчанию ДЕЙСТВУЮЩЕЕ");
-                        Console.WriteLine("а если соотвествий не найдено тогда останется как есть");
+                        Log("данные из этого столбца будут преобразованы в ДЕЙСТВУЮЩЕЕ или АННУЛИРОВАНО");
+                        Log("в соответствии с регулярными выражениями заданными в AnnulledRegex и ValidRegex (регистр игнориуется)");
+                        Log("если значение будет пустым тогда по умолчанию ДЕЙСТВУЮЩЕЕ");
+                        Log("а если соотвествий не найдено тогда останется как есть");
                         statusCol = ReadInput<int>("статус лицензии:", _autoCommand);
                     }
-                    Console.WriteLine();
-                    Console.WriteLine("данные из этого столбца будут заменены на соотвествующее");
-                    Console.WriteLine("при совпадении по ключу из таблицы BreadReplace.txt, иначе останется как есть");
+                    Log();
+                    Log("данные из этого столбца будут заменены на соотвествующее");
+                    Log("при совпадении по ключу из таблицы BreadReplace.txt, иначе останется как есть");
                     var brendCol = ReadInput<int>("название бренда:", _autoCommand);
-                    Console.WriteLine();
-                    Console.WriteLine("данные из этого столбца будут заменены на соотвествующее");
-                    Console.WriteLine("при совпадении по ключу из таблицы ModelReplace.txt, иначе останется как есть");
+                    Log();
+                    Log("данные из этого столбца будут заменены на соотвествующее");
+                    Log("при совпадении по ключу из таблицы ModelReplace.txt, иначе останется как есть");
                     var modelCol = ReadInput<int>("название модели:", _autoCommand);
-                    Console.WriteLine();
+                    Log();
+
+                    var exceptionCol = 0;
+                    if (licenceMerged)
+                    {
+                        Log("данные из этого столбца будут проверенны на слово 'ИСКЛ'");
+                        Log("если в нем будет данное слово, то данная машина будет принудительно добавлена в исходную выборку");
+                        exceptionCol = ReadInput<int>("статус лицензии:", _autoCommand);
+                    }
 
                     if(_autoCommand)
                         _j = 0;
@@ -254,7 +264,7 @@ namespace ExcelMerge
 
                             if (!_licenceRegex.IsMatch(licence))
                             {
-                                Console.WriteLine($"Лицензия {licence} имеет некорректный формат. Будет пропущена");
+                                Log($"Лицензия {licence} имеет некорректный формат. Будет пропущена");
                                 continue;
                             }
                             
@@ -264,6 +274,7 @@ namespace ExcelMerge
                             var status = licenceMerged ? CarStatus.Valid : ReplaceStatus(worksheet.Cells[i, statusCol].Text);
                             var brend = ReplaceIfFound(BrandsForReplace, worksheet.Cells[i, brendCol].Text);
                             var model = ReplaceIfFound(ModelsForReplace, worksheet.Cells[i, modelCol].Text);
+                            var isException = licenceMerged && OnlyNumbersAndLetters(worksheet.Cells[i, exceptionCol].Text) == "ИСКЛ";
 
                             var car = new CarInfo
                             {
@@ -272,12 +283,14 @@ namespace ExcelMerge
                                 Year = year,
                                 Status = status,
                                 Brend = brend,
-                                Model = model
+                                Model = model,
+                                IsException = isException
                             };
 
                             if (cars.ContainsKey(licence))
                             {
-                                Console.WriteLine($"Машина с лицензией {licence} уже была добавлена.");
+                                cars[licence].IsException = car.IsException;
+                                Log($"Машина с лицензией {licence} уже была добавлена. {(car.IsException ? "(искл)" : "")}");
                                 continue;
                             }
 
@@ -288,7 +301,8 @@ namespace ExcelMerge
                         {
                             if (Cars.ContainsKey(car.Key))
                             {
-                                Console.WriteLine($"Машина с лицензией {car.Key} уже была добавлена.");
+                                Cars[car.Key].IsException = car.Value.IsException;
+                                Log($"Машина с лицензией {car.Key} уже была добавлена. {(car.Value.IsException ? "(искл)" : "")}");
                                 continue;
                             }
 
@@ -297,24 +311,34 @@ namespace ExcelMerge
                     }
                     catch (Exception e)
                     {
-                        Console.WriteLine($"Произошла ошибка при обработке вкладки с название {worksheet.Name}");
-                        Console.WriteLine("Возможно вы указали некорректные номера столбцов");
-                        Console.WriteLine(e.ToString());
+                        Log($"Произошла ошибка при обработке вкладки с название {worksheet.Name}");
+                        Log("Возможно вы указали некорректные номера столбцов");
+                        Log(e.ToString());
                         Console.ReadLine();
                         continue;
                     }
 
-                    Console.WriteLine($"Загруженно дополнительно {cars.Count} информации по машинам");
-                    Console.WriteLine($"Текущий общий размер - {Cars.Count}");
+                    Log($"Загруженно дополнительно {cars.Count} информации по машинам");
+                    Log($"Текущий общий размер - {Cars.Count}");
                 }
             }
         }
 
-        private static T ReadInput<T>(string prompt = null, bool autoCommands = false)
+        private static T ReadInput<T>()
+        {
+            return ReadInput<T>(null, false);
+        }
+
+        private static T ReadInput<T>(string prompt)
+        {
+            return ReadInput<T>(prompt, false);
+        }
+
+        private static T ReadInput<T>(string prompt, bool autoCommands)
         {
             var validInput = false;
             var result = default(T);
-            if(!string.IsNullOrWhiteSpace(prompt)) Console.WriteLine(prompt);
+            if(!string.IsNullOrWhiteSpace(prompt)) Log(prompt);
             while (!validInput)
             {
                 try
@@ -324,7 +348,7 @@ namespace ExcelMerge
                     {
                         value = Commands[_i][_j];
                         _j++;
-                        Console.WriteLine(value);
+                        Log(value);
                     }
                     else
                         value = Console.ReadLine();
@@ -334,7 +358,7 @@ namespace ExcelMerge
                 }
                 catch
                 {
-                    Console.WriteLine("Введенные данные некорректны - попробуйте ещё раз");
+                    Log("Введенные данные некорректны - попробуйте ещё раз");
                 }
             }
             return result;
@@ -367,7 +391,7 @@ namespace ExcelMerge
             if (_validRegex.IsMatch(value))
                 return CarStatus.Valid;
 
-            Console.WriteLine($"Значение статуса {value} не подходит под правила регулярного выражения.");
+            Log($"Значение статуса {value} не подходит под правила регулярного выражения.");
 
             return CarStatus.Undefined;
         }
@@ -404,17 +428,12 @@ namespace ExcelMerge
             }
         }
 
-        private static Regex LoadRegexData(string fileName)
-        {
-            return new Regex(File.ReadAllText(fileName), RegexOptions.IgnoreCase);
-        }
-
         private static void LoadCommands(string fileName)
         {
             if (!File.Exists(fileName))
                 return;
 
-            _autoCommand = true;
+            _autoCommand = ConfigurationManager.AppSettings["CommandsEnable"].Equals("true", StringComparison.InvariantCultureIgnoreCase);
             var lines = File.ReadAllLines(fileName);
 
             for (var i = 1; i <= lines.Length; i++)
@@ -430,6 +449,18 @@ namespace ExcelMerge
             var dir = Directory.GetFiles(dirPath, "*.xlsx");
             return dir.Select(t => new FileInfo(t)).ToList();
         }
+
+        private static void Log(string text = null)
+        {
+            if (text == null)
+            {
+                Console.WriteLine();
+                return;
+            }
+
+            Console.WriteLine(text);
+            File.AppendAllLines("log.txt", new []{text});
+        }
     }
 
     public class CarInfo
@@ -440,6 +471,7 @@ namespace ExcelMerge
         public CarStatus Status { get; set; }
         public string Brend { get; set; }
         public string Model { get; set; }
+        public bool IsException { get; set; }
     }
 
     public enum CarStatus
